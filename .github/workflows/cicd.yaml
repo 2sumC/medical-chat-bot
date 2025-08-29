@@ -1,97 +1,53 @@
-name: Deploy Application Docker Image to EC2 instance
+name: Deploy Docker to EC2
 
 on:
   push:
-    branches: [main]
+    branches: [ "main" ]
 
 jobs:
-  Continuous-Integration:
+  ci:
     runs-on: ubuntu-latest
-
+    outputs:
+      image_uri: ${{ steps.build.outputs.image_uri }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
+      - id: login
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 仅判断是否为空，不打印真实值，避免泄露
-      - name: Assert ECR_REPO is set (no leak)
+      - name: Build, tag, push
+        id: build
         run: |
-          if [ -z "${{ secrets.ECR_REPO }}" ]; then
-            echo "::error ::ECR_REPO secret is EMPTY or missing"
-            exit 1
-          else
-            echo "ECR_REPO is present ✅"
-          fi
-
-      # （可选）确保仓库存在（幂等）
-      - name: Ensure ECR repository exists
-        run: |
-          aws ecr describe-repositories --repository-names "${{ secrets.ECR_REPO }}" >/dev/null 2>&1 \
-          || aws ecr create-repository --repository-name "${{ secrets.ECR_REPO }}" >/dev/null
-
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
-        env:
-          ECR_REGISTRY:   ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPO }}
-          IMAGE_TAG:      latest
-        run: |
-          set -euo pipefail
-          set -x
-          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          set -e
+          IMAGE_URI="${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPO }}:latest"
           echo "Building ${IMAGE_URI}"
           docker build -t "${IMAGE_URI}" .
           docker push "${IMAGE_URI}"
           echo "image_uri=${IMAGE_URI}" >> "${GITHUB_OUTPUT}"
 
-      # 直接打印 step 输出，确认真的产出了（不会泄露 secrets）
-      - name: Debug step output (CI)
-        run: echo "From CI step output: ${{ steps.build-image.outputs.image_uri }}"
-
-    outputs:
-      image_uri: ${{ steps.build-image.outputs.image_uri }}
-
-  Continuous-Deployment:
-    needs: Continuous-Integration
+  cd:
+    needs: ci
     runs-on: self-hosted
     env:
-      AWS_REGION:  ${{ secrets.AWS_DEFAULT_REGION }}
-      IMAGE_URI:   ${{ needs.Continuous-Integration.outputs.image_uri }}
-      APP_PORT:    8080
-
+      AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      IMAGE_URI:  ${{ needs.ci.outputs.image_uri }}
+      APP_PORT:   8080
     steps:
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@v2
 
-      # 同时打印 needs & env，双重确认为何为空
-      - name: Debug IMAGE_URI (CD)
+      - name: Debug IMAGE_URI
         run: |
-          echo "From needs: ${{ needs.Continuous-Integration.outputs.image_uri }}"
-          echo "From env:   ${IMAGE_URI}"
-
-      # 兜底：如果 IMAGE_URI 仍然为空，就现场计算一份 latest（避免卡住）
-      - name: Fallback IMAGE_URI if empty
-        if: env.IMAGE_URI == ''
-        env:
-          REGISTRY:       ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPO }}
-        run: |
-          FALLBACK_URI="${REGISTRY}/${ECR_REPOSITORY}:latest"
-          echo "IMAGE_URI=${FALLBACK_URI}" >> $GITHUB_ENV
-          echo "Applied fallback IMAGE_URI=${FALLBACK_URI}"
+          echo "needs -> ${{ needs.ci.outputs.image_uri }}"
+          echo "env   -> ${IMAGE_URI}"
 
       - name: Pull image
-        run: docker pull "$IMAGE_URI"
+        run: docker pull "${IMAGE_URI}"
 
       - name: Stop old container if exists
         run: docker ps -aq --filter "name=medical-chat-bot" | xargs -r docker rm -f
@@ -105,4 +61,4 @@ jobs:
             -e OPENAI_API_KEY="$OPENAI_API_KEY" \
             -e PINECONE_API_KEY="$PINECONE_API_KEY" \
             -p ${APP_PORT}:${APP_PORT} \
-            "$IMAGE_URI"
+            "${IMAGE_URI}"
