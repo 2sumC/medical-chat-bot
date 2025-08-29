@@ -1,9 +1,7 @@
 name: Deploy Docker to EC2
-
 on:
   push:
     branches: [ "main" ]
-
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -11,29 +9,19 @@ jobs:
       image_uri: ${{ steps.build.outputs.image_uri }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
-
       - id: login
         uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Debug build output
-        run: |
-          echo "Registry: ${{ steps.login.outputs.registry }}"
-          echo "ECR Repo: ${{ secrets.ECR_REPO }}"
-          echo "Image URI: ${{ steps.build.outputs.image_uri }}"
-
       - name: Build, tag, push
         id: build
         run: |
           set -e
           REGISTRY="${{ steps.login.outputs.registry }}"
           ECR_REPO="${{ secrets.ECR_REPO }}"
-
           if [ -z "$REGISTRY" ] || [ -z "$ECR_REPO" ]; then
             echo "Missing registry or ECR repo"
             exit 1
@@ -44,15 +32,24 @@ jobs:
           docker build -t "${IMAGE_URI}" .
           docker push "${IMAGE_URI}"
           echo "image_uri=${IMAGE_URI}" >> "${GITHUB_OUTPUT}"
-
+      - name: Debug build output
+        run: |
+          echo "Registry: ${{ steps.login.outputs.registry }}"
+          echo "ECR Repo: ${{ secrets.ECR_REPO }}"
+          echo "Image URI: ${{ steps.build.outputs.image_uri }}"
   cd:
     needs: ci
     runs-on: self-hosted
     env:
       AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-      IMAGE_URI:  ${{ needs.ci.outputs.image_uri }}
-      APP_PORT:   8080
+      IMAGE_URI: ${{ needs.ci.outputs.image_uri }}
+      APP_PORT: 8080
     steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
       - uses: aws-actions/amazon-ecr-login@v2
       
       - name: Validate IMAGE_URI
@@ -62,18 +59,10 @@ jobs:
             exit 1
           fi
           echo "IMAGE_URI is: ${IMAGE_URI}"
-
-      - name: Debug IMAGE_URI
-        run: |
-          echo "needs -> ${{ needs.ci.outputs.image_uri }}"
-          echo "env   -> ${IMAGE_URI}"
-
       - name: Pull image
         run: docker pull "${IMAGE_URI}"
-
       - name: Stop old container if exists
         run: docker ps -aq --filter "name=medical-chat-bot" | xargs -r docker rm -f
-
       - name: Run container
         env:
           OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
