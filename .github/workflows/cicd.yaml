@@ -32,7 +32,7 @@ jobs:
           IMAGE_TAG: latest
         run: |
           set -euo pipefail
-          IMAGE_URI = "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           echo "Building ${IMAGE_URI}"
           docker build -t "${IMAGE_URI}" .  
           docker push "${IMAGE_URI}"
