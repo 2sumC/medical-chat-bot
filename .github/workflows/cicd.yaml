@@ -1,77 +1,86 @@
 name: Deploy Docker to EC2
-
 on:
   push:
     branches: [ "main" ]
+
+env:
+  IMAGE_TAG: ${{ github.run_number }}-${{ github.sha }}
 
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: aws-actions/configure-aws-credentials@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
-
-      - id: login
+          
+      - name: Login to Amazon ECR
+        id: login
         uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, tag, push
+        
+      - name: Build and push Docker image
         run: |
-          set -euo pipefail
+          set -e
+          
           REGISTRY="${{ steps.login.outputs.registry }}"
-          REPO="${{ vars.ECR_REPO }}"                 # 仓库名用 vars，避免 secret 传播
-          if [ -z "$REGISTRY" ] || [ -z "$REPO" ]; then
-            echo "Missing registry or ECR repo"
-            exit 1
-          fi
-          IMAGE_URI="${REGISTRY}/${REPO}:latest"
-          echo "Building ${IMAGE_URI}"
-          docker build -t "${IMAGE_URI}" .
+          ECR_REPO="${{ secrets.ECR_REPO }}"
+          IMAGE_URI="${REGISTRY}/${ECR_REPO}:${{ env.IMAGE_TAG }}"
+          LATEST_URI="${REGISTRY}/${ECR_REPO}:latest"
+          
+          echo "🏗️ Building image: ${IMAGE_URI}"
+          docker build -t "${IMAGE_URI}" -t "${LATEST_URI}" .
+          
+          echo "📤 Pushing image to ECR..."
           docker push "${IMAGE_URI}"
+          docker push "${LATEST_URI}"
+          
+          echo "✅ Image pushed: ${IMAGE_URI}"
 
-      - name: Debug build
-        run: |
-          echo "Registry: ${{ steps.login.outputs.registry }}"
-          echo "Repo:     ${{ vars.ECR_REPO }}"
-
-  cd:  
+  cd:
     needs: ci
     runs-on: self-hosted
-    env:
-      AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-      APP_PORT:   8080
     steps:
-      - id: login
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
+          
+      - name: Login to Amazon ECR
+        id: login
         uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Compose IMAGE_URI locally
-        run: |
-          set -euo pipefail
-          REPO="$(echo "${{ vars.ECR_REPO }}" | tr -d '[:space:]')"
-          IMAGE_URI="${{ steps.login.outputs.registry }}/${REPO}:latest"
-          echo "IMAGE_URI=${IMAGE_URI}" | tee -a "$GITHUB_ENV"
-
-      - name: Debug IMAGE_URI
-        run: echo "env -> ${IMAGE_URI}"
-
-      - name: Pull image
-        run: docker pull "${IMAGE_URI}"
-
-      - name: Stop old container if exists
-        run: docker ps -aq --filter "name=medical-chat-bot" | xargs -r docker rm -f
-
-      - name: Run container
+      
+      - name: Deploy application
         env:
           OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          APP_PORT: 8080
         run: |
-          set -euo pipefail
-          docker run -d --restart unless-stopped --name medical-chat-bot \
-            -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-            -e PINECONE_API_KEY="$PINECONE_API_KEY" \
+          # 使用预定义的镜像标签构建 IMAGE_URI
+          REGISTRY="${{ steps.login.outputs.registry }}"
+          ECR_REPO="${{ secrets.ECR_REPO }}"
+          IMAGE_URI="${REGISTRY}/${ECR_REPO}:${{ env.IMAGE_TAG }}"
+          
+          echo "📥 Pulling image: ${IMAGE_URI}"
+          docker pull "${IMAGE_URI}"
+          
+          echo "🛑 Stopping existing container..."
+          docker ps -aq --filter "name=medical-chat-bot" | xargs -r docker rm -f || true
+          
+          echo "🚀 Starting new container..."
+          docker run -d \
+            --restart unless-stopped \
+            --name medical-chat-bot \
+            -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+            -e PINECONE_API_KEY="${PINECONE_API_KEY}" \
             -p ${APP_PORT}:${APP_PORT} \
             "${IMAGE_URI}"
+          
+          echo "✅ Container started successfully"
