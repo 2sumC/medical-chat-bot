@@ -33,10 +33,10 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE_URI = "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          echo "Building $IMAGE_URI"
-          docker build -t "$IMAGE_URI" .  
-          docker push "$IMAGE_URI"
-          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+          echo "Building ${IMAGE_URI}"
+          docker build -t "${IMAGE_URI}" .  
+          docker push "${IMAGE_URI}"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
           
     outputs:
       image_uri: ${{ steps.build-image.outputs.image_uri }}
