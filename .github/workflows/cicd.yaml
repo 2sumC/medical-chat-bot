@@ -1,80 +1,77 @@
 name: Deploy Docker to EC2
+
 on:
   push:
     branches: [ "main" ]
+
 jobs:
   ci:
     runs-on: ubuntu-latest
-    outputs:
-      image_uri: ${{ steps.build.outputs.image_uri }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
+
       - id: login
         uses: aws-actions/amazon-ecr-login@v2
+
       - name: Build, tag, push
-        id: build
         run: |
-          set -e
+          set -euo pipefail
           REGISTRY="${{ steps.login.outputs.registry }}"
-          ECR_REPO="${{ secrets.ECR_REPO }}"
-          if [ -z "$REGISTRY" ] || [ -z "$ECR_REPO" ]; then
+          REPO="${{ vars.ECR_REPO }}"                 # 仓库名用 vars，避免 secret 传播
+          if [ -z "$REGISTRY" ] || [ -z "$REPO" ]; then
             echo "Missing registry or ECR repo"
             exit 1
           fi
-          
-          IMAGE_URI="${REGISTRY}/${ECR_REPO}:latest"
+          IMAGE_URI="${REGISTRY}/${REPO}:latest"
           echo "Building ${IMAGE_URI}"
           docker build -t "${IMAGE_URI}" .
           docker push "${IMAGE_URI}"
-          echo "image_uri=${IMAGE_URI}" >> "${GITHUB_OUTPUT}"
-      - name: Debug build output
+
+      - name: Debug build
         run: |
           echo "Registry: ${{ steps.login.outputs.registry }}"
-          echo "ECR Repo: ${{ secrets.ECR_REPO }}"
-          echo "Image URI: ${{ steps.build.outputs.image_uri }}"
-          
-    cd:
-      needs: ci
-      runs-on: self-hosted
-      env:
-        AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-        APP_PORT:   8080
-      steps:
-        - id: login
-          uses: aws-actions/amazon-ecr-login@v2
+          echo "Repo:     ${{ vars.ECR_REPO }}"
 
-        - name: Compose IMAGE_URI locally
-          id: uri
-          run: |
-            set -euo pipefail
-            REPO="$(echo "${{ vars.ECR_REPO }}" | tr -d '[:space:]')"   # ← 用变量而非 secret
-            IMAGE_URI="${{ steps.login.outputs.registry }}/${REPO}:latest"
-            echo "IMAGE_URI=${IMAGE_URI}"
-            echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"              # 导出到后续 steps 的环境变量
+  cd:  
+    needs: ci
+    runs-on: self-hosted
+    env:
+      AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      APP_PORT:   8080
+    steps:
+      - id: login
+        uses: aws-actions/amazon-ecr-login@v2
 
-        - name: Debug IMAGE_URI
-          run: |
-            echo "env -> ${IMAGE_URI}"
+      - name: Compose IMAGE_URI locally
+        run: |
+          set -euo pipefail
+          REPO="$(echo "${{ vars.ECR_REPO }}" | tr -d '[:space:]')"
+          IMAGE_URI="${{ steps.login.outputs.registry }}/${REPO}:latest"
+          echo "IMAGE_URI=${IMAGE_URI}" | tee -a "$GITHUB_ENV"
 
-        - name: Pull image
-          run: docker pull "${IMAGE_URI}"
+      - name: Debug IMAGE_URI
+        run: echo "env -> ${IMAGE_URI}"
 
-        - name: Stop old container if exists
-          run: docker ps -aq --filter "name=medical-chat-bot" | xargs -r docker rm -f
+      - name: Pull image
+        run: docker pull "${IMAGE_URI}"
 
-        - name: Run container
-          env:
-            OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
-            PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-          run: |
-            set -euo pipefail
-            docker run -d --restart unless-stopped --name medical-chat-bot \
-              -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-              -e PINECONE_API_KEY="$PINECONE_API_KEY" \
-              -p ${APP_PORT}:${APP_PORT} \
-              "${IMAGE_URI}"
+      - name: Stop old container if exists
+        run: docker ps -aq --filter "name=medical-chat-bot" | xargs -r docker rm -f
+
+      - name: Run container
+        env:
+          OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+        run: |
+          set -euo pipefail
+          docker run -d --restart unless-stopped --name medical-chat-bot \
+            -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+            -e PINECONE_API_KEY="$PINECONE_API_KEY" \
+            -p ${APP_PORT}:${APP_PORT} \
+            "${IMAGE_URI}"
