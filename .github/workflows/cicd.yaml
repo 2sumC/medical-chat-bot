@@ -21,11 +21,25 @@ jobs:
       - id: login
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Debug build output
+        run: |
+          echo "Registry: ${{ steps.login.outputs.registry }}"
+          echo "ECR Repo: ${{ secrets.ECR_REPO }}"
+          echo "Image URI: ${{ steps.build.outputs.image_uri }}"
+
       - name: Build, tag, push
         id: build
         run: |
           set -e
-          IMAGE_URI="${{ steps.login.outputs.registry }}/${{ secrets.ECR_REPO }}:latest"
+          REGISTRY="${{ steps.login.outputs.registry }}"
+          ECR_REPO="${{ secrets.ECR_REPO }}"
+
+          if [ -z "$REGISTRY" ] || [ -z "$ECR_REPO" ]; then
+            echo "Missing registry or ECR repo"
+            exit 1
+          fi
+          
+          IMAGE_URI="${REGISTRY}/${ECR_REPO}:latest"
           echo "Building ${IMAGE_URI}"
           docker build -t "${IMAGE_URI}" .
           docker push "${IMAGE_URI}"
@@ -40,6 +54,14 @@ jobs:
       APP_PORT:   8080
     steps:
       - uses: aws-actions/amazon-ecr-login@v2
+      
+      - name: Validate IMAGE_URI
+        run: |
+          if [ -z "${IMAGE_URI}" ]; then
+            echo "ERROR: IMAGE_URI is empty"
+            exit 1
+          fi
+          echo "IMAGE_URI is: ${IMAGE_URI}"
 
       - name: Debug IMAGE_URI
         run: |
