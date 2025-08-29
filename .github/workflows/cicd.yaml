@@ -44,7 +44,7 @@ jobs:
 
   Continuous-Deployment:
     needs: Continuous-Integration
-    runs-on: [self-hosted, ec2]
+    runs-on: self-hosted
     env:
       AWS_REGION:  ${{ secrets.AWS_DEFAULT_REGION }}
       IMAGE_URI:   ${{ needs.Continuous-Integration.outputs.image_uri }}
