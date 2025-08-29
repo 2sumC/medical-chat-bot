@@ -37,39 +37,44 @@ jobs:
           echo "Registry: ${{ steps.login.outputs.registry }}"
           echo "ECR Repo: ${{ secrets.ECR_REPO }}"
           echo "Image URI: ${{ steps.build.outputs.image_uri }}"
-  cd:
-    needs: ci
-    runs-on: self-hosted
-    env:
-      AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-      IMAGE_URI: ${{ needs.ci.outputs.image_uri }}
-      APP_PORT: 8080
-    steps:
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
-      - uses: aws-actions/amazon-ecr-login@v2
-      
-      - name: Validate IMAGE_URI
-        run: |
-          if [ -z "${IMAGE_URI}" ]; then
-            echo "ERROR: IMAGE_URI is empty"
-            exit 1
-          fi
-          echo "IMAGE_URI is: ${IMAGE_URI}"
-      - name: Pull image
-        run: docker pull "${IMAGE_URI}"
-      - name: Stop old container if exists
-        run: docker ps -aq --filter "name=medical-chat-bot" | xargs -r docker rm -f
-      - name: Run container
-        env:
-          OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
-          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-        run: |
-          docker run -d --restart unless-stopped --name medical-chat-bot \
-            -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-            -e PINECONE_API_KEY="$PINECONE_API_KEY" \
-            -p ${APP_PORT}:${APP_PORT} \
-            "${IMAGE_URI}"
+          
+    cd:
+      needs: ci
+      runs-on: self-hosted
+      env:
+        AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        APP_PORT:   8080
+      steps:
+        - id: login
+          uses: aws-actions/amazon-ecr-login@v2
+
+        - name: Compose IMAGE_URI locally
+          id: uri
+          run: |
+            set -euo pipefail
+            REPO="$(echo "${{ vars.ECR_REPO }}" | tr -d '[:space:]')"   # ← 用变量而非 secret
+            IMAGE_URI="${{ steps.login.outputs.registry }}/${REPO}:latest"
+            echo "IMAGE_URI=${IMAGE_URI}"
+            echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"              # 导出到后续 steps 的环境变量
+
+        - name: Debug IMAGE_URI
+          run: |
+            echo "env -> ${IMAGE_URI}"
+
+        - name: Pull image
+          run: docker pull "${IMAGE_URI}"
+
+        - name: Stop old container if exists
+          run: docker ps -aq --filter "name=medical-chat-bot" | xargs -r docker rm -f
+
+        - name: Run container
+          env:
+            OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
+            PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          run: |
+            set -euo pipefail
+            docker run -d --restart unless-stopped --name medical-chat-bot \
+              -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+              -e PINECONE_API_KEY="$PINECONE_API_KEY" \
+              -p ${APP_PORT}:${APP_PORT} \
+              "${IMAGE_URI}"
