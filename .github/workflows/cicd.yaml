@@ -59,7 +59,7 @@ jobs:
   cd:
     name: Run container on EC2 (self-hosted runner)
     needs: ci
-    runs-on: [self-hosted,ec2]
+    runs-on: [ self-hosted,ec2 ]
     permissions:
       contents: read
     env:
