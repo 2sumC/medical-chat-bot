@@ -70,23 +70,7 @@ jobs:
           
           echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
           echo "🏷️ Set IMAGE_URI: ${IMAGE_URI}"
-        
-      - name: Clean up Docker space
-        run: |
-          set -euo pipefail
-          
-          if [ "$AVAILABLE_GB" -lt 2 ]; then
-            echo "⚠️ ..."
             
-            docker ps -aq --filter "name=medical-chat-bot" | xargs -r docker rm -f || true
-            docker system prune -f || true
-            docker image prune -a -f --filter "until=24h" || true
-            docker volume prune -f || true
-            
-            echo "✅"
-            df -h / | head -2
-          fi
-        
       - name: Pull Docker image
         run: |
           set -euo pipefail
