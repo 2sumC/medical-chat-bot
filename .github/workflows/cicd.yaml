@@ -23,27 +23,13 @@ jobs:
           
       - name: Login to Amazon ECR
         id: login
-        uses: aws-actions/amazon-ecr-login@v2
-        with:
-          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}   # 明确 region，避免 registry 为空
+        uses: aws-actions/amazon-ecr-login@v2  
         
       - name: Build and push Docker image
         run: |
           set -euo pipefail
           REGISTRY="${{ steps.login.outputs.registry }}"
-          # 可切换为 vars.ECR_REPO： REPO_RAW="${{ vars.ECR_REPO }}"
-          REPO_RAW="${{ secrets.ECR_REPO }}"
-          ECR_REPO="$(echo "${REPO_RAW}" | tr -d '[:space:]')"
-
-          if [ -z "${REGISTRY}" ]; then
-            echo "ERROR: ECR registry is empty. Check ecr login / region." >&2
-            exit 1
-          fi
-          if [ -z "${ECR_REPO}" ]; then
-            echo "ERROR: ECR_REPO is empty. Set it in Settings → Variables/Secrets." >&2
-            exit 1
-          fi
-
+          ECR_REPO="${{ secrets.ECR_REPO }}"
           IMAGE_URI="${REGISTRY}/${ECR_REPO}:${{ env.IMAGE_TAG }}"
           LATEST_URI="${REGISTRY}/${ECR_REPO}:latest"
 
@@ -70,55 +56,6 @@ jobs:
       - name: Login to Amazon ECR
         id: login
         uses: aws-actions/amazon-ecr-login@v2
-        with:
-          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}   # 明确 region
-      
-      - name: Compose IMAGE_URI (strict) & show context
-        env:
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
-        run: |
-          set -euo pipefail
-          REGISTRY="${{ steps.login.outputs.registry }}"
-          # 可切换为 vars.ECR_REPO： REPO_RAW="${{ vars.ECR_REPO }}"
-          REPO_RAW="${{ secrets.ECR_REPO }}"
-          ECR_REPO="$(echo "${REPO_RAW}" | tr -d '[:space:]')"
-
-          if [ -z "${REGISTRY}" ]; then
-            echo "ERROR: ECR registry is empty. Check ecr login / region." >&2
-            exit 1
-          fi
-          if [ -z "${ECR_REPO}" ]; then
-            echo "ERROR: ECR_REPO is empty. Set it in Settings → Variables/Secrets." >&2
-            exit 1
-          fi
-          if [ -z "${IMAGE_TAG}" ]; then
-            echo "ERROR: IMAGE_TAG is empty." >&2
-            exit 1
-          fi
-
-          IMAGE_URI="${REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
-          echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"
-          echo "Registry: ${REGISTRY}"
-          echo "Repo:     ${ECR_REPO}"
-          echo "Tag:      ${IMAGE_TAG}"
-
-      - name: Check disk and prune if low
-        run: |
-          set -euo pipefail
-          echo "Disk usage BEFORE:"
-          df -h /
-          echo
-          USED_PCT=$(df --output=pcent / | tail -1 | tr -dc '0-9')
-          if [ "$USED_PCT" -ge 90 ]; then
-            echo "Low free space detected (used ${USED_PCT}%). Pruning docker artifacts..."
-            docker ps -aq | xargs -r docker rm -f || true
-            docker system prune -af --volumes || true
-            docker builder prune -af || true
-            echo "Disk usage AFTER prune:"
-            df -h /
-          else
-            echo "Sufficient free space (used ${USED_PCT}%), skip prune."
-          fi
 
       - name: Pull image
         run: |
@@ -138,14 +75,15 @@ jobs:
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           APP_PORT:         8080
         run: |
-          set -euo pipefail
-          echo "🚀 Starting new container..."
-          docker run -d \
-            --restart unless-stopped \
-            --name medical-chat-bot \
-            --log-opt max-size=10m --log-opt max-file=3 \
-            -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
-            -e PINECONE_API_KEY="${PINECONE_API_KEY}" \
-            -p ${APP_PORT}:${APP_PORT} \
-            "${IMAGE_URI}"
-          echo "✅ Container started successfully"
+            REGISTRY="${{ steps.login.outputs.registry }}" 
+            ECR_REPO="${{ secrets.ECR_REPO }}" 
+            IMAGE_URI="${REGISTRY}/${ECR_REPO}:${{ env.IMAGE_TAG }}"
+            
+            docker run -d \
+              --restart unless-stopped \
+              --name medical-chat-bot \
+              -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+              -e PINECONE_API_KEY="${PINECONE_API_KEY}" \
+              -p ${APP_PORT}:${APP_PORT} \
+              "${IMAGE_URI}"
+              
